@@ -11,7 +11,7 @@ https://drive.google.com/drive/folders/1QmVE96fgWuBzlYo06aggyiJY0JFUARvl?usp=sha
 - Perform statistical analysis
 
 ## ModelTrainingAndScoreCalculation.py
-- Generate models for classification using both stratified k-fold cross-validation and leave-one-study-out cross-validation
+- Generate models for classification using both stratified 10-fold cross-validation and leave-one-study-out cross-validation
 - Generate models for NKI dataset classification using 10-fold cross validation
 - Generate models with ACES dataset and use NKI as validation dataset.
 - Save the models for DRS
