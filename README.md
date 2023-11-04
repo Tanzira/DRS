@@ -3,7 +3,7 @@ Repository for breast cancer metastasis analysis.
 Global transcriptional rewiring accurately predicts breast cancer metastasis]{Global transcriptional rewiring accurately predicts breast cancer metastasis
 # Dataset
 ## All the intermediary files and datasets can be found here.
-https://drive.google.com/drive/folders/1QmVE96fgWuBzlYo06aggyiJY0JFUARvl?usp=sharing
+10.5281/zenodo.10070758
 ## NetworkAnalysis.py
 - Generate network for a specific lambda using bootstrap
 - Read the coefficient files and generates networks
