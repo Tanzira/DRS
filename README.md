@@ -10,13 +10,13 @@ https://drive.google.com/drive/folders/1QmVE96fgWuBzlYo06aggyiJY0JFUARvl?usp=sha
 - Generate .gml file for cytoscape to visualize the networks
 - Perform statistical analysis
 
-## ModelTrainingAndScoreCalculation.py
+## Training.py
 - Generate models for classification using both stratified 10-fold cross-validation and leave-one-study-out cross-validation
 - Generate models for NKI dataset classification using 10-fold cross validation
 - Generate models with ACES dataset and use NKI as validation dataset.
 - Save the models for DRS
 - Calculate probability scores for different algorithms and save them
 
-## FigureGeneration.py
+## Figures.py
 - Generate figures provided in the paper using saved probability scores for each dataset and configuration
 
