@@ -3,353 +3,27 @@
 """
 Created on Fri Nov  3 18:10:46 2023
 
-@author: tanzira
+@author: tanzira, sakhawat
 """
 
 #%% All imports
 import pandas as pd
 import numpy as np
-from sklearn import linear_model
 from scipy.io import loadmat
 from sklearn.utils import resample
 import os
-# import matplotlib.pyplot as plt
-import pickle
-# from scipy import stats
 import networkx as nx
-import matplotlib.pyplot as plt
-import seaborn as sns
+
+from drs import DRS
+from utils import get_network_attributes
+
 #%% Network creation for metastatic and not metastatic patients
-#getting input for metastatic or non metastatic coefficient calculation.
-meta_val = 0 #1 means metastatic 0 means non metastatic
+
 data_raw  = loadmat('Dataset/ACES_Data/ACESExpr.mat')['data']
-p_type = loadmat('Dataset/ACES_Data/ACESLabel.mat')['label']
+y = loadmat('Dataset/ACES_Data/ACESLabel.mat')['label']
 entrez_id = loadmat('Dataset/ACES_Data/ACES_EntrezIds.mat')['entrez_ids']
-expr_data = pd.DataFrame(data_raw)
-expr_data.columns = entrez_id.reshape(-1)
-
-#Getting only patients with metastatic/non metastatic cancer for coefficient calculation.
-patients = expr_data.loc[p_type == meta_val, :]
-#Reading TF file and getting common TF bettween gene expression and TF file
-tf_file = 'http://humantfs.ccbr.utoronto.ca/download/v_1.01/DatabaseExtract_v_1.01.txt'
-human_tfs = pd.read_csv(tf_file, sep = '\t', usecols=(1, 2, 4, 5, 11))
-human_tfs = human_tfs[(human_tfs['Is TF?'] =='Yes') & (human_tfs['EntrezGene ID'] != 'None')]
-human_tfs.set_index('EntrezGene ID', inplace = True)
-human_tfs.index = human_tfs.index.astype(int)
-
-common_tf = np.intersect1d(expr_data.columns, human_tfs.index)
-
-#Omitting here for bootstrapping
-# tf_df = patients.loc[:, common_tf]
-
-'''Lasso regression'''
-def do_lasso(sampled_data, tf_df, lambda_val):
-    coefficients = []
-    for gene in sampled_data.columns:
-        y = sampled_data.loc[:, gene].values.copy()
-        tf_exp = tf_df.copy()
-        if gene in tf_df.columns:
-            tf_exp.loc[:, gene] = 0
-        x = tf_exp.to_numpy()
-        reg = linear_model.Lasso(alpha=lambda_val, max_iter=10000, random_state = 0)#Lasso regression model
-        reg.fit(x, y)  
-        coefficients.append(reg.coef_)
-    return coefficients
-
-#Doing lasso for 200 times with bbotstrapping
-niter = 200
-#creating model for lambda 0.03
-LAMBDA_VAL = 0.06
-models = []
-for n in range(niter):
-    sampled_data = patients.loc[resample(patients.index, n_samples=1161), :]
-    tf_df = sampled_data.loc[:, common_tf]
-    coef = do_lasso(sampled_data, tf_df, LAMBDA_VAL)
-    print("Unique columns: ", n ,sampled_data.index.nunique(), sampled_data.shape)
-    models.append(coef)
-##Combining the models from different alpha values
-models = np.swapaxes(np.stack(models), 1, 2)
-dir_name = 'Models/NetworkModels'
-try:
-    os.makedirs(dir_name, exist_ok=True)
-except OSError:
-    print("Error occured")
-if meta_val == 1:
-    f2 = dir_name + '/meta_net_with_{}_bootstrap_mean.pkl'.format(niter)
-if meta_val == 0:
-    f2 = dir_name + '/nmeta_net_with_{}_bootstrap_mean.pkl'.format(niter)
-mean_model = np.mean(models, axis = 0).T
-#uncomment if you want to write
-# out2 = open(f2, 'wb')
-# pickle.dump(mean_model, out2)
-# out2.close()
-
-#%% TFTG coregulatory network analysis and statistics
-#parameters
-LAMBDA_VAL = 0.06
-ALPHA_CUTOFF = 0.02
-r2_threshold = 0.1
-m_file = 'Models/NetworkModels/meta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
-nm_file = 'Models/NetworkModels/nmeta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
-lasso_meta = pd.read_csv(m_file, index_col = 0)
-lasso_nmeta = pd.read_csv(nm_file, index_col = 0)
-
-r2 = pd.read_csv('R2CVScores/cv_r2_score_lambda_{0}.txt'.format(LAMBDA_VAL), header=None)
-
-goodGenes = (r2.values >= r2_threshold)
-filtered_meta = lasso_meta.loc[goodGenes, :] # filtering genes with better r2
-filtered_nmeta = lasso_nmeta.loc[goodGenes, :] # filtering genes with better r2
-print(filtered_meta.shape, filtered_nmeta.shape)
-
-#Keeping only the connections that are greater than coefficient/alpha threshold
-filtered_meta[np.abs(filtered_meta) < ALPHA_CUTOFF] = 0
-filtered_nmeta[np.abs(filtered_nmeta) < ALPHA_CUTOFF] = 0
-
-target_tf_meta = pd.DataFrame(filtered_meta)
-target_tf_nmeta = pd.DataFrame(filtered_nmeta)
-cols = list(map(int, target_tf_meta.columns))
-
-target_tf_meta.columns = cols
-target_tf_nmeta.columns = cols
-
-all_targets = np.union1d(target_tf_meta.index, target_tf_meta.columns)
-adj_mat_meta = target_tf_meta.reindex(all_targets, columns = all_targets, fill_value = 0).T
-adj_mat_nmeta = target_tf_nmeta.reindex(all_targets, columns = all_targets, fill_value = 0).T
-
-pos_edge_m, neg_edge_m = (adj_mat_meta > 0).sum().sum(), (adj_mat_meta < 0).sum().sum()
-pos_edge_nm, neg_edge_nm = (adj_mat_nmeta > 0).sum().sum(), (adj_mat_nmeta < 0).sum().sum()
-
-GM = nx.convert_matrix.from_pandas_adjacency(adj_mat_meta, create_using=nx.DiGraph())
-GNM = nx.convert_matrix.from_pandas_adjacency(adj_mat_nmeta, create_using=nx.DiGraph())
-
-GM.edges(data = True)
-GNM.edges(data = True)
-
-print(GM)
-print(GNM)
-
-n_edges_m, n_edges_nm = nx.number_of_edges(GM), nx.number_of_edges(GNM)
-n_singletons_m, n_singletons_nm = len(list(nx.isolates(GM))), len(list(nx.isolates(GNM)))
-
-def get_in_out_degree_dist(G1, G2, targets, tfs):
-    in_degrees_m = [G1.in_degree(n) for n in targets]
-    in_degrees_nm = [G2.in_degree(n) for n in targets]
-    out_degrees_m = [G1.out_degree(n) for n in tfs]
-    out_degrees_nm = [G2.out_degree(n) for n in tfs]
-    
-    ##Removing zeors from the list for the TFs. For targets we have at least 1 TF that's regulating it.
-    out_degrees_m = [i for i in out_degrees_m if i != 0]
-    out_degrees_nm = [i for i in out_degrees_nm if i != 0]
-    return in_degrees_m,in_degrees_nm, out_degrees_m,out_degrees_nm
-   
-
-#Getting Tfs and targets
-targets = target_tf_meta.index
-tfs = target_tf_meta.columns
-
-in_meta, in_nmeta, out_meta, out_nmeta = get_in_out_degree_dist(GM, GNM, targets, tfs)
-
-#getting number of TFs and targets with at least 1 target or TF in it.
-n_tf_meta, n_tf_nmeta = len(out_meta), len(out_nmeta)
-n_tg_meta, n_tg_nmeta = len(in_meta), len(in_nmeta)
-
-#Getting minimum or maximum in and out degree
-max_out_m, max_out_nm = max(out_meta), max(out_nmeta)
-max_in_m, max_in_nm = max(in_meta), max(in_nmeta)
-
-#Getting average and median in and out degrees.
-avg_in_meta, avg_in_nmeta = np.mean(in_meta), np.mean(in_nmeta)
-avg_out_meta, avg_out_nmeta = np.mean(out_meta), np.mean(out_nmeta)
-med_in_meta, med_in_nmeta = np.median(in_meta), np.median(in_nmeta)
-med_out_meta, med_out_nmeta = np.median(out_meta), np.median(out_nmeta)
-
-# #removing the singletons
-GM.remove_nodes_from(list(nx.isolates(GM)))
-GNM.remove_nodes_from(list(nx.isolates(GNM)))
-
-##calculating nodes after removing the sinfletons
-nodes_m, nodes_nm = GM.number_of_nodes(), GNM.number_of_nodes()
-#average degree
-avg_deg_m, avg_deg_nm = n_edges_m /nodes_m ,  n_edges_nm / nodes_nm
-
-#largest degree
-l_deg_m = sorted(GM.degree, key=lambda x: x[1], reverse=True)[0][1]
-l_deg_nm = sorted(GNM.degree, key=lambda x: x[1], reverse=True)[0][1]
-#Clustering coefficient
-avg_cc_m,  avg_cc_nm= nx.average_clustering(GM), nx.average_clustering(GNM)
-
-#getting average shortest path
-# avg_spl_m, avg_spl_nm = nx.average_shortest_path_length(GM), nx.average_shortest_path_length(GNM)
-
-#Converting the graph into undriected graph because for directed graph some functions are unavailable.
-HGM, HGNM = GM.to_undirected(), GNM.to_undirected()
-
-#getting largest connected components
-gcc_m = sorted(nx.connected_components(HGM), key=len, reverse=True)
-lcc_m = len(HGM.subgraph(gcc_m[0]))
-gcc_nm = sorted(nx.connected_components(HGNM), key=len, reverse=True)
-lcc_nm = len(HGNM.subgraph(gcc_nm[0]))
-
-
-#getting average shortest path for largest connected component
-avg_spl_m_ud, avg_spl_nm_ud = nx.average_shortest_path_length(HGM.subgraph(gcc_m[0])),\
-                                nx.average_shortest_path_length(HGNM.subgraph(gcc_nm[0]))
-
-#getting diameter for largest connected component
-diameter_m, diameter_nm = nx.diameter(HGM.subgraph(gcc_m[0])),\
-                                nx.diameter(HGNM.subgraph(gcc_nm[0]))
-
-#Clustering coefficient
-avg_cc_m_ud,  avg_cc_nm_ud= nx.average_clustering(HGM), nx.average_clustering(HGNM)
-
-#average degree
-nodes_m_ud, nodes_nm_ud = HGM.number_of_nodes(), HGNM.number_of_nodes()
-avg_deg_m_ud, avg_deg_nm_ud = 2*HGM.number_of_edges() /nodes_m_ud ,\
-                                2*HGNM.number_of_edges() / nodes_nm_ud
-
-print('Network stats \t\t\t meta \t non-meta')
-
-print('# of nodes \t\t\t\t{} \t{}'.format(nodes_m, nodes_nm))
-print('# of edges \t\t\t\t{} \t{}'.format(n_edges_m, n_edges_nm))
-
-
-print('# of TFs \t\t\t\t{} \t\t{}'.format(n_tf_meta, n_tf_nmeta))
-print('# of Targets \t\t\t{} \t{}'.format(n_tg_meta, n_tg_nmeta))
-
-
-
-print('+ve edge \t\t\t\t{} \t {}'.format(pos_edge_m, pos_edge_nm))
-print('-ve edge \t\t\t\t{} \t {}'.format(neg_edge_m, neg_edge_nm))
-
-
-print('max out degree(TF) \t\t{} \t\t {}'.format(max_out_m, max_out_nm))
-print('max in degree(TG) \t\t{} \t\t {}'.format(max_in_m, max_in_nm))
-print('mean out degree(TF) \t\t{:.2f} \t {:.2f}'.format(avg_out_meta, avg_out_nmeta))
-print('mean in degree(TG)\t\t{:.2f} \t {:.2f}'.format(avg_in_meta, avg_in_nmeta ))
-print('median out degree(TF) \t{:.2f} \t {:.2f}'.format(med_out_meta, med_out_nmeta))
-print('median in degree(TG)\t\t{:.2f} \t {:.2f}'.format(med_in_meta, med_in_nmeta))
-
-print('singletons \t\t\t\t{} \t\t {}'.format(n_singletons_m, n_singletons_nm))
-print('mean degree \t\t\t\t{:.2f} \t {:.2f}'.format(avg_deg_m, avg_deg_nm))
-
-print('largest degree \t\t\t{} \t\t {}'.format(l_deg_m, l_deg_nm))
-
-print('Average CC \t\t\t\t{:.2f} \t {:.2f}'.format(avg_cc_m, avg_cc_nm))
-# print('Average Shortest path \t{:.2f} \t {:.2f}'.format(avg_spl_m, avg_spl_nm))
-
-print('mean degree UD \t\t\t{:.2f} \t {:.2f}'.format(avg_deg_m_ud, avg_deg_nm_ud))
-print('Average CC UD \t\t\t{:.2f} \t {:.2f}'.format(avg_cc_m_ud,  avg_cc_nm_ud))
-
-print('Largest Conne Comp UD \t\t{} \t {}'.format(lcc_m, lcc_nm))
-
-print('Largest connected comp avg shortest path UD \t\t{:.2f} \t {:.2f}'.format(avg_spl_m_ud, avg_spl_nm_ud))
-print('Largest connected comp diameter UD \t\t\t\t{} \t\t {}'.format(diameter_m, diameter_nm))
-
-#%% Creating the coreg-antireg network using the mean coefficient from 200 bootstrap
-LAMBDA_VAL = 0.06
-ALPHA_CUTOFF = 0.02
-r2_threshold = 0.1
-m_file = 'Models/NetworkModels/meta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
-nm_file = 'Models/NetworkModels/nmeta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
-lasso_meta = pd.read_csv(m_file, index_col = 0)
-lasso_nmeta = pd.read_csv(nm_file, index_col = 0)
-
-r2 = pd.read_csv('R2CVScores/cv_r2_score_lambda_{0}.txt'.format(LAMBDA_VAL), header=None)
-
-goodGenes = (r2.values >= r2_threshold)
-filtered_meta = lasso_meta.loc[goodGenes, :] # filtering genes with better r2
-filtered_nmeta = lasso_nmeta.loc[goodGenes, :] # filtering genes with better r2
-
-print(filtered_meta.shape, filtered_meta.shape)
-
-filtered_meta[filtered_meta >= ALPHA_CUTOFF] = 1
-filtered_meta[filtered_meta < -ALPHA_CUTOFF] = -1
-filtered_meta[np.abs(filtered_meta) < 1] = 0
-#creating a mask for antiregulatory and coregulatory network
-mask_p_meta = filtered_meta == 1
-mask_n_meta = filtered_meta == -1
-
-meta_plus = filtered_meta.copy()
-meta_minus =  filtered_meta.copy()
-
-#making all the positive relationships to 1 and the others as 0
-meta_plus[mask_p_meta] = 1
-meta_plus[~mask_p_meta] = 0
-
-#making all the negative relationships to 1 and the others as 0
-meta_minus[mask_n_meta] = 1
-meta_minus[~mask_n_meta] = 0
-
-filtered_nmeta[filtered_nmeta >= ALPHA_CUTOFF] = 1
-filtered_nmeta[filtered_nmeta < -ALPHA_CUTOFF] = -1
-filtered_nmeta[np.abs(filtered_nmeta) < 1] = 0
-#creating a mask for antiregulatory and coregulatory network
-mask_p_nmeta = filtered_nmeta == 1
-mask_n_nmeta = filtered_nmeta == -1
-
-nmeta_plus = filtered_nmeta.copy()
-nmeta_minus =  filtered_nmeta.copy()
-
-#making all the positive relationships to 1 and the others as 0
-nmeta_plus[mask_p_nmeta] = 1
-nmeta_plus[~mask_p_nmeta] = 0
-#making all the negative relationships to 1 and the others as 0
-nmeta_minus[mask_n_nmeta] = 1
-nmeta_minus[~mask_n_nmeta] = 0
-
-#creating coregulatory and antiregulatory network for metastatic
-coreg_meta = (meta_plus.T @ meta_plus) + (meta_minus.T @ meta_minus)
-antireg_meta = (meta_plus.T @ meta_minus) + (meta_minus.T @ meta_plus)
-np.fill_diagonal(coreg_meta.values, 0) # Filling the diagonals with 0
-np.fill_diagonal(antireg_meta.values, 0) # Filling the diagonals with 0
-
-#creating coregulatory and antiregulatory network for not metastatic
-coreg_nmeta = (nmeta_plus.T @ nmeta_plus) + (nmeta_minus.T @ nmeta_minus)
-antireg_nmeta = (nmeta_plus.T @ nmeta_minus)  + (nmeta_minus.T @ nmeta_plus)
-np.fill_diagonal(coreg_nmeta.values, 0) # Filling the diagonals with 0
-np.fill_diagonal(antireg_nmeta.values, 0) # Filling the diagonals with 0
-'''Saving the TF TF coregulatory network'''
-def saving_tf_tf_coreg_antireg_network(tf_tf_coreg, tf_tf_antireg, fname):
-    #Different edge threshold for picking a sparser network
-    edge_ths =[100]
-    for edge_th in edge_ths:
-        #pval_th = -np.log10(pval)
-        tf_coreg = tf_tf_coreg.copy()
-        tf_coreg = pd.DataFrame(tf_coreg >= edge_th, dtype = np.int32)
-        if isinstance(tf_tf_antireg, pd.DataFrame):
-            tf_antireg = tf_tf_antireg.copy()
-            tf_antireg = pd.DataFrame(tf_antireg>= edge_th, dtype = np.int32)*2
-            tf_net = tf_coreg + tf_antireg
-        else:
-            tf_net = tf_coreg
-        G = nx.from_numpy_matrix(tf_net.values, create_using=None)
-        label_mapping = {idx: val for idx, val in enumerate(human_tfs.loc[tf_net.columns.astype(int), 'HGNC symbol'])}
-        G = nx.relabel_nodes(G, label_mapping)
-        G1 = G.copy()
-        G.remove_nodes_from(list(nx.isolates(G)))
-        sf = 'CoregNetRecomb_{0}/tf_tf_{1}_edge_th_{2}_coef_{3}_r2_{4}_1.gml'.\
-                format(LAMBDA_VAL, fname, edge_th, ALPHA_CUTOFF, r2_threshold)
-        #returning the whole network, network without singletons and the filename.
-        return G, G1, sf
-        
-meta_net, meta_net2, sf1 = saving_tf_tf_coreg_antireg_network(coreg_meta, antireg_meta, 'meta')
-
-nmeta_net, nmeta_net2, sf2 = saving_tf_tf_coreg_antireg_network(coreg_nmeta, antireg_nmeta, 'nmeta')
-
-common_nodes = np.intersect1d(meta_net.nodes, nmeta_net.nodes)
-total_nodes =  np.union1d(meta_net.nodes, nmeta_net.nodes)
-# print(len(total_nodes), len(common_nodes))
-
-'''Getting networks with same nodes(TFs) from union of two networks'''
-meta_net = meta_net2.subgraph(total_nodes)
-nmeta_net = nmeta_net2.subgraph(total_nodes)
-
-print(meta_net, nmeta_net)
-
-# nx.write_gml(meta_net, sf1)
-# nx.write_gml(nmeta_net, sf2)
-
-#%% TF-Target network creation and node difference calculation
+X = pd.DataFrame(data_raw)
+X.columns = entrez_id.reshape(-1)
 
 #reading protein coding genes for HGNC symbol
 
@@ -358,13 +32,100 @@ pc_genes = pd.read_csv('Dataset/protein-coding_gene_04_26_2023.txt',
 pc_genes = pc_genes[['symbol', 'name','entrez_id', 'ensembl_gene_id']]
 pc_genes.set_index('entrez_id', inplace = True)
 
+
+#Reading TF file and getting common TF bettween gene expression and TF file
+tf_file = 'http://humantfs.ccbr.utoronto.ca/download/v_1.01/DatabaseExtract_v_1.01.txt'
+human_tfs = pd.read_csv(tf_file, sep = '\t', usecols=(1, 2, 4, 5, 11))
+human_tfs = human_tfs[(human_tfs['Is TF?'] =='Yes') & (human_tfs['EntrezGene ID'] != 'None')]
+human_tfs.set_index('EntrezGene ID', inplace = True)
+human_tfs = human_tfs.loc[~np.isnan(human_tfs.index.astype(float)), :]
+human_tfs.index = human_tfs.index.astype(int)
+
+common_tf = np.intersect1d(X.columns, human_tfs.index)
+
+r2_file = 'R2CVScores/cv_r2_score_lambda_{0}.txt'
+
+dirname = 'models/NetworkModels'
+
+try:
+    os.makedirs(dirname, exist_ok=True)
+except:
+    print('Could not create directory')
+
+#%% Create bootstrap-mean models
+
+
+niter = 200 # Number of bootstrap iterations
+LAMBDA_VAL = 0.06
+
+models = []
+for i in range(niter):
+    print(f'Iteration {i}')
+    X_pos = X.loc[y == 1, :]
+    X_neg = X.loc[y == 0, :]
+    X_pos_sampled = X_pos.loc[resample(X_pos.index, n_samples = len(X_pos))]
+    X_neg_sampled = X_neg.loc[resample(X_neg.index, n_samples = len(X_neg))]
+    X_sampled = np.vstack([X_pos_sampled, X_neg_sampled])
+    y_sampled = np.hstack([np.ones(len(X_pos)), np.zeros(len(X_neg))])
+    tf_locs = [X.columns.get_loc(c) for c in common_tf]
+    drs_obj = DRS.train(X_sampled, y_sampled, tf_locs, [LAMBDA_VAL])
+    models.append(drs_obj.models)
+
+# Export
+try:
+    os.makedirs(dirname, exist_ok=True)
+    for label_name in models[0].keys():
+        A_mean = np.stack([m[label_name][0] for m in models]).mean(axis = 0).T
+        #scipy.sparse.save_npz(f'{dirname}/{label_name}_net_with_bootstrap_mean_{LAMBDA_VAL}.npz',
+        #                      scipy.sparse.csr_matrix(A_mean))
+        df_A = pd.DataFrame(A_mean, index = X.columns, columns = common_tf)
+        df_A.to_csv(f'{dirname}/{label_name}_net_with_bootstrap_mean_{LAMBDA_VAL}.csv')
+except OSError:
+    print("Error occured")
+
+#%% TF-Target coregulatory network analysis and statistics
+
+LAMBDA_VAL = 0.06
+ALPHA_CUTOFF = 0.02
+r2_threshold = 0.1
+
+r2 = pd.read_csv(r2_file.format(LAMBDA_VAL), header=None)
+goodGenes = (r2.values >= r2_threshold)
+
+A = {}
+attributes = {}
+for label_name in ['meta', 'nmeta']:
+    filename = f'{dirname}/{label_name}_net_with_bootstrap_mean_{LAMBDA_VAL}.csv'
+    A_mean = pd.read_csv(filename, index_col = 0)
+    A_mean = A_mean.loc[goodGenes, :]
+    A_mean[np.abs(A_mean) < ALPHA_CUTOFF] = 0
+    A_mean.columns = A_mean.columns.astype(int)
+    A_mean.index = A_mean.index.astype(int)
+    print(A_mean.shape)
+    targets = A_mean.index
+    tfs = A_mean.columns
+
+    all_targets = np.union1d(A_mean.index, A_mean.columns.astype(int))
+    A_mean = A_mean.reindex(all_targets, columns = all_targets, fill_value = 0).T
+    A[label_name] = A_mean
+    print('Summarizing network attributes for', label_name)
+    attributes[label_name] = pd.Series(get_network_attributes(A_mean, tfs, targets))
+
+attributes = pd.concat(attributes).unstack().T.convert_dtypes()
+print(attributes)
+
+#%% TF-Target network creation and node difference calculation
+
+
 '''Creating TF-Target network'''
 
 LAMBDA_VAL = 0.06
 ALPHA_CUTOFF = 0.02
 r2_threshold = 0.1
-m_file = 'Models/NetworkModels/meta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
-nm_file = 'Models/NetworkModels/nmeta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
+
+
+m_file = dirname + '/meta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
+nm_file = dirname + '/nmeta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
 lasso_meta = pd.read_csv(m_file, index_col = 0)
 lasso_nmeta = pd.read_csv(nm_file, index_col = 0)
 
@@ -423,5 +184,84 @@ top_targets = network_attribute[network_attribute['node_type'] == 'target'].sort
 
 #Uncomment these lines if you want to save these two files
 
-top_tfs.to_csv('CoregNetRecomb_{0}/top_tfs_based_on_diff_bootstrapped_{0}.csv'.format(LAMBDA_VAL))
-top_targets.to_csv('CoregNetRecomb_{0}/top_targets_based_on_diff_bootstrapped_{0}.csv'.format(LAMBDA_VAL))
+top_tfs.to_csv(dirname + '/top_tfs_based_on_diff_bootstrapped_{0}.csv'.format(LAMBDA_VAL))
+top_targets.to_csv(dirname + '/top_targets_based_on_diff_bootstrapped_{0}.csv'.format(LAMBDA_VAL))
+
+#%% TF-TF network
+
+r2_threshold = 0.1
+ALPHA_CUTOFF = 0.02
+delta = 100
+LAMBDA_VAL = 0.06
+write_gml = False
+
+# Read data
+matfile_p = dirname + "meta_net_with_bootstrap_mean_{0}.csv".format(LAMBDA_VAL)
+matfile_n = dirname + "nmeta_net_with_bootstrap_mean_{0}.csv".format(LAMBDA_VAL)
+
+#r2file = basepath + "cv_r2_score_alpha_{0}.txt".format(lambda_)
+#r2 = pd.read_csv(r2file, header = None).squeeze()
+r2 = pd.read_csv(r2_file.format(LAMBDA_VAL), header=None)
+
+M_met = pd.read_csv(matfile_p, sep = ",", index_col = 0)
+M_non = pd.read_csv(matfile_n, sep = ",", index_col = 0)
+
+assert r2.shape[0] == M_met.shape[0] and r2.shape[0] == M_non.shape[0]
+
+tf_file = 'http://humantfs.ccbr.utoronto.ca/download/v_1.01/DatabaseExtract_v_1.01.txt'
+tfs = pd.read_csv(tf_file, sep = '\t', usecols=(1, 2, 4, 5, 11))
+tfs = tfs[tfs['Is TF?'] =='Yes']
+tfs.set_index('EntrezGene ID', inplace = True)
+tfs = tfs.loc[~np.isnan(tfs.index.astype(float)), :]
+
+tfs = tfs.loc[M_met.columns.astype(str), 'HGNC symbol']
+tfs.index = tfs.index.astype(str)
+M_met.columns = tfs.values
+M_non.columns = tfs.values
+
+print(tfs.shape)
+
+# apply r2 cutoff
+mask_r2 = (r2 >= r2_threshold).values
+print('r2 >= {0}: {1}/{2} ({3:.2f}%)'.format(r2_threshold, mask_r2.sum(),
+                                        mask_r2.shape[0], mask_r2.sum() * 100 / mask_r2.shape[0]))
+
+for label_name, M_label in zip(['meta', 'nmeta'], [M_met, M_non]):
+    
+    M_label = M_label.loc[mask_r2, :].to_numpy()
+    
+    # apply alpha cutoff and change range to [-1, 1]
+    M_label[(M_label < ALPHA_CUTOFF) & (M_label > -ALPHA_CUTOFF)] = 0
+    M_label = pd.DataFrame(M_label, columns = tfs.values)
+    
+    # TF-TF network
+    pos_label = np.zeros(shape = M_met.shape).astype(float)
+    neg_label = np.zeros(shape = M_met.shape).astype(float)
+
+    
+    pos_label[M_met > 0] = 1
+    neg_label[M_met < 0] = 1
+    
+    # Float matrix multiplication is faster than int
+    Sc = (np.dot(pos_label.T, pos_label) + np.dot(neg_label.T, neg_label)).astype(int)
+    Sa = (np.dot(pos_label.T, neg_label) + np.dot(neg_label.T, pos_label)).astype(int)
+
+    
+    np.fill_diagonal(Sc, 0)
+    np.fill_diagonal(Sa, 0)
+    
+    # Apply delta cutoff
+    Sc = pd.DataFrame((Sc >= delta).astype(int), index = tfs.values, columns = tfs.values)
+    Sa = pd.DataFrame((Sa >= delta).astype(int), index = tfs.values, columns = tfs.values)
+
+    # Aggregate
+    S = Sc + 2*Sa
+    
+    S = pd.DataFrame(S, index = tfs, columns = tfs)
+    
+    SG = nx.from_pandas_adjacency(S)
+    SG.remove_nodes_from(list(nx.isolates(SG)))
+    
+    graphname = dirname + '/TFnet-#--lambda_{0}-r2_{1}-a_{2}-D_{3}'.format(LAMBDA_VAL, r2_threshold, ALPHA_CUTOFF, delta)
+    if write_gml:
+        nx.write_gml(SG, graphname.replace('#', 'met') + '.gml')
