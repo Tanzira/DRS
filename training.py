@@ -25,8 +25,10 @@ from utils import format_time, get_filtered_expr, qtnorm_with_ref_columnwise
 
 RANDOM_SEED = 42
 USE_SAVED_MODELS = False
+DATASET_DIRECTORY = './dataset'
+MODEL_DIRECTORY = './models'
+SCORES_DIRECTORY = 'probability_scores'
 
-probability_scores_dir = 'probability_scores'
 lambdas = [0.13, 0.06, 0.03]
 lambda_map = {k: v for v, k in enumerate(lambdas)}
 
@@ -102,16 +104,17 @@ lambdas = [0.13, 0.06, 0.03]
 lambda_map = {k: v for v, k in enumerate(lambdas)}
 
 '''AECS data'''
-aces_raw  = loadmat( 'Dataset/ACES_Data/ACESExpr.mat')['data']
-aces_p_type = loadmat('Dataset/ACES_Data/ACESLabel.mat')['label']
-aces_entrez_id = loadmat('Dataset/ACES_Data/ACES_EntrezIds.mat')['entrez_ids']
+aces_dirname = f'{DATASET_DIRECTORY}/ACES'
+aces_raw  = loadmat(f'{aces_dirname}/ACESExpr.mat')['data']
+aces_p_type = loadmat(f'{aces_dirname}/ACESLabel.mat')['label']
+aces_entrez_id = loadmat(f'{aces_dirname}/ACES_EntrezIds.mat')['entrez_ids']
 aces_data = pd.DataFrame(aces_raw)
 aces_data.columns = aces_entrez_id.reshape(-1)
 
 
 ''' Seperating the studies for leave one study out cross validation. '''
 
-cv_train_idx_file = 'Dataset/ACES_Data/CVIndTrain200.txt'
+cv_train_idx_file = f'{aces_dirname}/CVIndTrain200.txt'
 train_cv_idx = pd.read_csv(cv_train_idx_file, header = None, sep = ' ')
 d_map = pd.DataFrame(0, 
                      index = range(train_cv_idx.shape[0]),
@@ -126,15 +129,16 @@ for col in train_cv_idx.columns:
 
 
 '''Reading NKI data'''
-nki_raw = loadmat('Dataset/NKI_Data/vijver.mat')['vijver']
-nki_p_type = loadmat('Dataset/NKI_Data/VijverLabel.mat')['label']
-nki_entrez_id = loadmat('Dataset/NKI_Data/vijver_gene_list.mat')['vijver_gene_list']
+nki_dirname = f'{DATASET_DIRECTORY}/NKI'
+nki_raw = loadmat(f'{nki_dirname}/vijver.mat')['vijver']
+nki_p_type = loadmat(f'{nki_dirname}/VijverLabel.mat')['label']
+nki_entrez_id = loadmat(f'{nki_dirname}/vijver_gene_list.mat')['vijver_gene_list']
 nki_data = pd.DataFrame(nki_raw)
 nki_data.columns = nki_entrez_id.reshape(-1)
 
 '''Reading TF file'''
 #tf_file = 'http://humantfs.ccbr.utoronto.ca/download/v_1.01/DatabaseExtract_v_1.01.txt'
-tf_file = 'Dataset/DatabaseExtract_v_1.01_human_TFs.txt'
+tf_file = f'{DATASET_DIRECTORY}/DatabaseExtract_v_1.01_human_TFs.txt'
 human_tfs = pd.read_csv(tf_file, sep = '\t', usecols=(1, 2, 4, 5, 11))
 human_tfs = human_tfs[(human_tfs['Is TF?'] =='Yes') & (human_tfs['EntrezGene ID'] != 'None')]
 human_tfs.set_index('EntrezGene ID', inplace = True)
@@ -142,16 +146,13 @@ human_tfs = human_tfs.loc[~np.isnan(human_tfs.index.astype(float)), :]
 human_tfs.index = human_tfs.index.astype(int)
 
 '''read r2 values for each gene file'''
-r2 = pd.read_csv('R2CVScores/cv_r2_score_lambda_{0}.txt'.format(LAMBDA_VAL), header=None)
+r2 = pd.read_csv(f'{DATASET_DIRECTORY}/R2_scores/cv_r2_score_lambda_{LAMBDA_VAL}.txt', header=None)
 r2.index = aces_data.columns
-
-label_names = {0: 'nmeta', 1: 'meta'}
-
         
 #%% ACES 10 fold statified CV training and evaluation
 
 #-----------------------------------------
-dirname = './models/ACESStratifiedKFold'
+dirname = f'{MODEL_DIRECTORY}/ACESStratifiedKFold'
 lambdas = [0.13, 0.06, 0.03] # all lambda values will be used for model training
 n_fold = 10
 r2_threshold = 0.1
@@ -185,14 +186,14 @@ print('AUC:\n------------------')
 for colname in scores.columns:
     print('{:10s}:\t{:.3f}'.format(colname, roc_auc_score(scores['real_class'], scores[colname])))
 
-sfile = probability_scores_dir + \
+sfile = SCORES_DIRECTORY + \
     '/aces_ten_fold_scores_lambda_{0}_r2_{1}_alpha_{2}.csv'.format(LAMBDA_VAL, r2_threshold, ALPHA_CUTOFF)
 scores.to_csv(sfile)
     
 #%% ACES leave-one-study-out model building
 
 #-----------------------------------------
-dirname = './models/ACESLeaveOneStudyOut'
+dirname = f'{MODEL_DIRECTORY}/ACESLeaveOneStudyOut'
 lambdas = [0.13, 0.06, 0.03]
 r2_threshold = 0.1
 # r2_threshold = r2.values.min()-1 # if you want to use all the genes then use this threshold
@@ -235,14 +236,14 @@ print('AUC:\n------------------')
 for colname in scores.columns:
     print('{:10s}:\t{:.3f}'.format(colname, roc_auc_score(scores['real_class'], scores[colname])))
     
-sfile = probability_scores_dir + \
+sfile = SCORES_DIRECTORY + \
     '/aces_loso_scores_lambda_{0}_r2_{1}_alpha_{2}.csv'.format(LAMBDA_VAL, r2_threshold, ALPHA_CUTOFF)
 scores.to_csv(sfile)
 
 #%% NKI 10 fold statified CV model building
 
 #-----------------------------------------
-dirname = './models/NKIStratifiedKFold'
+dirname = f'{MODEL_DIRECTORY}/NKIStratifiedKFold'
 lambdas = [0.13, 0.06, 0.03]
 #Not using any alpha or r2 cutoff here
 ALPHA_CUTOFF = 0.0
@@ -267,7 +268,7 @@ print('AUC:\n------------------')
 for colname in scores.columns:
     print('{:10s}:\t{:.3f}'.format(colname, roc_auc_score(scores['real_class'], scores[colname])))
     
-sfile = probability_scores_dir + \
+sfile = SCORES_DIRECTORY + \
     '/nki_ten_fold_scores_lambda_{0}_alpha_{1}.csv'.format(LAMBDA_VAL, ALPHA_CUTOFF)
 scores.to_csv(sfile)
 
@@ -275,7 +276,7 @@ scores.to_csv(sfile)
 
 #-----------------------------------------
 lambdas = [0.13, 0.06, 0.03]
-dirname = './models/NKIDataValidationModels'
+dirname = f'{MODEL_DIRECTORY}/NKIDataValidationModels'
 r2_threshold = 0.1
 # r2_threshold = r2.values.min()-1 # if you want to use all the genes then use this threshold
 ALPHA_CUTOFF = 0.02
@@ -311,26 +312,6 @@ print('AUC:\n------------------')
 for colname in scores.columns:
     print('{:10s}:\t{:.3f}'.format(colname, roc_auc_score(scores['real_class'], scores[colname])))
 
-sfile = probability_scores_dir + \
+sfile = SCORES_DIRECTORY + \
     '/nki_validation_scores_lambda_{0}_r2_{1}_alpha_{2}.csv'.format(LAMBDA_VAL, r2_threshold, ALPHA_CUTOFF)
 scores.to_csv(sfile)
-
-#%% Sanity check
-
-LAMBDA_VAL = 0.06
-classifier_names = ['DRS', 'RF', 'MLP', 'LogR', 'DecTree', 'KNN', 'SVC']
-score_files = [
-        'aces_ten_fold_scores_lambda_{0}_r2_{1}_alpha_{2}.csv'.format(LAMBDA_VAL, 0.1, 0.02),
-        'aces_loso_scores_lambda_{0}_r2_{1}_alpha_{2}.csv'.format(LAMBDA_VAL, 0.1, 0.02),
-        'nki_ten_fold_scores_lambda_{0}_alpha_{1}.csv'.format(LAMBDA_VAL, 0.0),
-        'nki_validation_scores_lambda_{0}_r2_{1}_alpha_{2}.csv'.format(LAMBDA_VAL, 0.1, 0.02)
-    ]
-
-for score_file in score_files:
-    print(score_file.split('_lambda')[0])
-    s_old = pd.read_csv(probability_scores_dir + '_old/' + score_file)
-    s_new = pd.read_csv(probability_scores_dir + '/' + score_file)
-    p_old = [roc_auc_score(s_old['real_class'].astype(int), s_old[col].values) for col in classifier_names]
-    p_new = [roc_auc_score(s_new['real_class'].astype(int), s_new[col]) for col in classifier_names]
-    comp = pd.DataFrame([p_old, p_new], columns = classifier_names, index = ['old', 'new']).T
-    print(comp.round(3), '\n')
