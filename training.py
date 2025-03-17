@@ -62,9 +62,9 @@ def evaluate(X, y,
         start_time = time.time()
         if len(train_test_indices) == 1:
             # only one train/test split, do not use subdirectory for folds
-            dirname_fold = dirname + f'/fold_{fold}'
-        else:
             dirname_fold = dirname
+        else:
+            dirname_fold = dirname + f'/fold_{fold}'
         
         X_train, y_train = X[train_index], y[train_index]
         X_test, y_test = X[test_index], y[test_index]

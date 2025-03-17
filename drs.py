@@ -82,7 +82,6 @@ class DRS():
         self.intercepts = intercepts
             
     def save_to_file(self, dirname):
-        # TODO: save as sparse matrices instead of pickle objects
         try:
             os.makedirs(dirname, exist_ok=True)
             for label, label_name in DRS.label_names.items():
