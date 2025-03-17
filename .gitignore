@@ -1,0 +1,7 @@
+# Ignore everything
+*
+
+# Except .py and .md files in the top-level directory
+!*.gitignore
+!/*.py
+!/*.md
