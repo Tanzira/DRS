@@ -72,32 +72,6 @@ metabric_p_type = metabric_p_type.astype(int).values
 # drop genes with nan values
 metabric_data = metabric_data.loc[:, (np.isnan(metabric_data).sum(axis = 0) == 0).values]
 
-'''Reading TCGA Data'''
-tcga_dirname = f'{DATASET_DIRECTORY}/TCGA_BRCA'
-tcga_raw = pd.read_csv(f'{tcga_dirname}/data_mrna_seq_v2_rsem.txt', sep = '\t')
-tcga_raw = tcga_raw.drop(['Hugo_Symbol'], axis = 1)
-# Some entrez IDs are duplicated, use the average for those genes
-tcga_data = tcga_raw.groupby('Entrez_Gene_Id').mean().T
-# remove the sample type suffix from the index
-tcga_data.index = tcga_data.index.str[:-3]
-# remove genes with 0 standard deviation
-tcga_data = tcga_data.loc[:, tcga_data.std(axis = 0) > 0]
-
-tcga_p_type = pd.read_csv(f'{tcga_dirname}/data_clinical_patient.txt', sep = '\t', skiprows = 4, index_col = 0)
-tcga_p_type = tcga_p_type[['OS_MONTHS', 'OS_STATUS', 'PFS_MONTHS', 'PFS_STATUS']]
-tcga_p_type['label'] = 2
-tcga_p_type.loc[tcga_p_type['PFS_MONTHS'] >= 60, 'label'] = 0
-tcga_p_type.loc[(tcga_p_type['PFS_MONTHS'] < 60) & (tcga_p_type['PFS_STATUS'] == '1:PROGRESSION'), 'label'] = 1
-tcga_p_type = tcga_p_type[tcga_p_type['label'] < 2]['label']
-tcga_p_type = tcga_p_type.loc[np.intersect1d(tcga_p_type.index, tcga_data.index)]
-tcga_data = tcga_data.loc[tcga_p_type.index, :]
-tcga_p_type = tcga_p_type.astype(int).values
-# drop genes with nan values
-tcga_data = tcga_data.loc[:, (np.isnan(tcga_data).sum(axis = 0) == 0).values]
-# keep protein-coding genes only
-pc_genes = pd.read_csv(f'{DATASET_DIRECTORY}/protein-coding_gene_04_26_2023.txt', sep = '\t', usecols = [0, 1, 2, 18])
-tcga_data = tcga_data.loc[:, np.intersect1d(tcga_data.columns, pc_genes['entrez_id'])]
-
 r2_file = f'{DATASET_DIRECTORY}/R2_scores/cv_r2_score_lambda'
 
 datasets = {'ACES': (aces_data, aces_p_type),
@@ -142,8 +116,8 @@ def train_bootstrap_mean_models(X, y, common_tf, niter, lambda_val, dirname):
 
 #%% Create bootstrap-mean models from ACES data
 
-dirname = 'models/NetworkModels/METABRIC'
-niter = 20 # Number of bootstrap iterations
+dirname = 'models/NetworkModels/ACES'
+niter = 200 # Number of bootstrap iterations
 LAMBDA_VAL = 0.06
 
 X, y = datasets[dirname.split('/')[-1]]
@@ -153,25 +127,13 @@ common_tf = np.intersect1d(X.columns, human_tfs.index)
 
 train_bootstrap_mean_models(X, y, common_tf, niter, LAMBDA_VAL, dirname)
 
-#%% Create bootstrap-mean models from NKI data
-
-dirname = 'models/NetworkModels/NKI'
-niter = 20 # Number of bootstrap iterations
-LAMBDA_VAL = 0.06
-X = nki_data.copy()
-y = nki_p_type.ravel()
-common_tf = np.intersect1d(nki_data.columns, human_tfs.index)
-
-train_bootstrap_mean_models(X, y, common_tf, niter, LAMBDA_VAL, dirname)
-
 #%% TF-Target coregulatory network analysis and statistics
 
-dirname = 'models/NetworkModels/NKI' # ACES | NKI | METABRIC
+dirname = 'models/NetworkModels/ACES' # ACES | NKI | METABRIC
 LAMBDA_VAL = 0.06
 #ALPHA_CUTOFF = 0.02
 ALPHA_CUTOFF = 0.00
 r2_threshold = 0.1
-
 
 target_dataset = datasets[dirname.split('/')[-1]][0]
 
