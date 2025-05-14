@@ -17,20 +17,30 @@ import networkx as nx
 from drs import DRS
 from utils import get_network_attributes
 
-#%% Network creation for metastatic and not metastatic patients
+DATASET_DIRECTORY = './dataset'
+#%% Load Datasets
 
-data_raw  = loadmat('Dataset/ACES_Data/ACESExpr.mat')['data']
-y = loadmat('Dataset/ACES_Data/ACESLabel.mat')['label']
-entrez_id = loadmat('Dataset/ACES_Data/ACES_EntrezIds.mat')['entrez_ids']
-X = pd.DataFrame(data_raw)
-X.columns = entrez_id.reshape(-1)
-
+'''AECS data'''
+aces_dirname = f'{DATASET_DIRECTORY}/ACES'
+aces_raw  = loadmat(f'{aces_dirname}/ACESExpr.mat')['data']
+aces_p_type = loadmat(f'{aces_dirname}/ACESLabel.mat')['label']
+aces_entrez_id = loadmat(f'{aces_dirname}/ACES_EntrezIds.mat')['entrez_ids']
+aces_data = pd.DataFrame(aces_raw)
+aces_data.columns = aces_entrez_id.reshape(-1)
 #reading protein coding genes for HGNC symbol
 
-pc_genes = pd.read_csv('Dataset/protein-coding_gene_04_26_2023.txt',
+pc_genes = pd.read_csv(f'{DATASET_DIRECTORY}/protein-coding_gene_04_26_2023.txt',
                        index_col = 0, sep = '\t', low_memory=False)
 pc_genes = pc_genes[['symbol', 'name','entrez_id', 'ensembl_gene_id']]
 pc_genes.set_index('entrez_id', inplace = True)
+
+'''Reading NKI data'''
+nki_dirname = f'{DATASET_DIRECTORY}/NKI'
+nki_raw = loadmat(f'{nki_dirname}/vijver.mat')['vijver']
+nki_p_type = loadmat(f'{nki_dirname}/VijverLabel.mat')['label']
+nki_entrez_id = loadmat(f'{nki_dirname}/vijver_gene_list.mat')['vijver_gene_list']
+nki_data = pd.DataFrame(nki_raw)
+nki_data.columns = nki_entrez_id.reshape(-1)
 
 
 #Reading TF file and getting common TF bettween gene expression and TF file
@@ -41,56 +51,140 @@ human_tfs.set_index('EntrezGene ID', inplace = True)
 human_tfs = human_tfs.loc[~np.isnan(human_tfs.index.astype(float)), :]
 human_tfs.index = human_tfs.index.astype(int)
 
-common_tf = np.intersect1d(X.columns, human_tfs.index)
+common_tf = np.intersect1d(aces_data.columns, human_tfs.index)
 
-r2_file = 'R2CVScores/cv_r2_score_lambda_{0}.txt'
+'''Reading METABRIC data'''
+metabric_dirname = f'{DATASET_DIRECTORY}/METABRIC'
+metabric_raw = pd.read_csv(f'{metabric_dirname}/data_mrna_illumina_microarray.txt', sep = '\t')
+metabric_raw = metabric_raw.drop(['Hugo_Symbol'], axis = 1)
+# Some entrez IDs are duplicated, use the average for those genes
+metabric_data = metabric_raw.groupby('Entrez_Gene_Id').mean().T
 
+metabric_p_type = pd.read_csv(f'{metabric_dirname}/data_clinical_patient.txt', sep = '\t', skiprows = 4, index_col = 0)
+metabric_p_type = metabric_p_type[['OS_MONTHS', 'OS_STATUS', 'RFS_MONTHS', 'RFS_STATUS']]
+metabric_p_type['label'] = 2
+metabric_p_type.loc[metabric_p_type['RFS_MONTHS'] >= 60, 'label'] = 0
+metabric_p_type.loc[(metabric_p_type['RFS_MONTHS'] < 60) & (metabric_p_type['RFS_STATUS'] == '1:Recurred'), 'label'] = 1
+metabric_p_type = metabric_p_type[metabric_p_type['label'] < 2]['label']
+metabric_p_type = metabric_p_type.loc[np.intersect1d(metabric_p_type.index, metabric_data.index)]
+metabric_data = metabric_data.loc[metabric_p_type.index, :]
+metabric_p_type = metabric_p_type.astype(int).values
+# drop genes with nan values
+metabric_data = metabric_data.loc[:, (np.isnan(metabric_data).sum(axis = 0) == 0).values]
+
+'''Reading TCGA Data'''
+tcga_dirname = f'{DATASET_DIRECTORY}/TCGA_BRCA'
+tcga_raw = pd.read_csv(f'{tcga_dirname}/data_mrna_seq_v2_rsem.txt', sep = '\t')
+tcga_raw = tcga_raw.drop(['Hugo_Symbol'], axis = 1)
+# Some entrez IDs are duplicated, use the average for those genes
+tcga_data = tcga_raw.groupby('Entrez_Gene_Id').mean().T
+# remove the sample type suffix from the index
+tcga_data.index = tcga_data.index.str[:-3]
+# remove genes with 0 standard deviation
+tcga_data = tcga_data.loc[:, tcga_data.std(axis = 0) > 0]
+
+tcga_p_type = pd.read_csv(f'{tcga_dirname}/data_clinical_patient.txt', sep = '\t', skiprows = 4, index_col = 0)
+tcga_p_type = tcga_p_type[['OS_MONTHS', 'OS_STATUS', 'PFS_MONTHS', 'PFS_STATUS']]
+tcga_p_type['label'] = 2
+tcga_p_type.loc[tcga_p_type['PFS_MONTHS'] >= 60, 'label'] = 0
+tcga_p_type.loc[(tcga_p_type['PFS_MONTHS'] < 60) & (tcga_p_type['PFS_STATUS'] == '1:PROGRESSION'), 'label'] = 1
+tcga_p_type = tcga_p_type[tcga_p_type['label'] < 2]['label']
+tcga_p_type = tcga_p_type.loc[np.intersect1d(tcga_p_type.index, tcga_data.index)]
+tcga_data = tcga_data.loc[tcga_p_type.index, :]
+tcga_p_type = tcga_p_type.astype(int).values
+# drop genes with nan values
+tcga_data = tcga_data.loc[:, (np.isnan(tcga_data).sum(axis = 0) == 0).values]
+# keep protein-coding genes only
+pc_genes = pd.read_csv(f'{DATASET_DIRECTORY}/protein-coding_gene_04_26_2023.txt', sep = '\t', usecols = [0, 1, 2, 18])
+tcga_data = tcga_data.loc[:, np.intersect1d(tcga_data.columns, pc_genes['entrez_id'])]
+
+r2_file = f'{DATASET_DIRECTORY}/R2_scores/cv_r2_score_lambda'
+
+datasets = {'ACES': (aces_data, aces_p_type),
+            'NKI': (nki_data, nki_p_type),
+            'METABRIC': (metabric_data, metabric_p_type)
+            }
 dirname = 'models/NetworkModels'
+    
+#%% Helper functions
 
-try:
-    os.makedirs(dirname, exist_ok=True)
-except:
-    print('Could not create directory')
+def train_bootstrap_mean_models(X, y, common_tf, niter, lambda_val, dirname):
+    mean_models = {}
+    for i in range(niter):
+        print(f'Iteration {i}')
+        X_pos = X.loc[y == 1, :]
+        X_neg = X.loc[y == 0, :]
+        X_pos_sampled = X_pos.loc[resample(X_pos.index, n_samples = len(X_pos))]
+        X_neg_sampled = X_neg.loc[resample(X_neg.index, n_samples = len(X_neg))]
+        X_sampled = np.vstack([X_pos_sampled, X_neg_sampled])
+        y_sampled = np.hstack([np.ones(len(X_pos)), np.zeros(len(X_neg))])
+        tf_locs = [X.columns.get_loc(c) for c in common_tf]
+        drs_obj = DRS.train(X_sampled, y_sampled, tf_locs, [LAMBDA_VAL])
+        if len(mean_models) == 0:
+            mean_models = {k: v for k, v in drs_obj.models.items()}
+        else:
+            for k, v in drs_obj.models.items():
+                mean_models[k] += v
 
-#%% Create bootstrap-mean models
+    # Export
+    try:
+        os.makedirs(dirname, exist_ok=True)
+        for label_name in mean_models.keys():
+            A_mean = mean_models[label_name] / niter
+            assert A_mean.shape[0] == 1
+            A_mean = A_mean[0].T
+            #scipy.sparse.save_npz(f'{dirname}/{label_name}_net_with_bootstrap_mean_{LAMBDA_VAL}.npz',
+            #                      scipy.sparse.csr_matrix(A_mean))
+            df_A = pd.DataFrame(A_mean, index = X.columns, columns = common_tf)
+            df_A.to_csv(f'{dirname}/{label_name}_net_with_bootstrap_mean_{LAMBDA_VAL}.csv')
+    except OSError:
+        print("Error occured")
 
+#%% Create bootstrap-mean models from ACES data
 
-niter = 200 # Number of bootstrap iterations
+dirname = 'models/NetworkModels/METABRIC'
+niter = 20 # Number of bootstrap iterations
 LAMBDA_VAL = 0.06
 
-models = []
-for i in range(niter):
-    print(f'Iteration {i}')
-    X_pos = X.loc[y == 1, :]
-    X_neg = X.loc[y == 0, :]
-    X_pos_sampled = X_pos.loc[resample(X_pos.index, n_samples = len(X_pos))]
-    X_neg_sampled = X_neg.loc[resample(X_neg.index, n_samples = len(X_neg))]
-    X_sampled = np.vstack([X_pos_sampled, X_neg_sampled])
-    y_sampled = np.hstack([np.ones(len(X_pos)), np.zeros(len(X_neg))])
-    tf_locs = [X.columns.get_loc(c) for c in common_tf]
-    drs_obj = DRS.train(X_sampled, y_sampled, tf_locs, [LAMBDA_VAL])
-    models.append(drs_obj.models)
+X, y = datasets[dirname.split('/')[-1]]
+X = X.copy()
+y = y.ravel()
+common_tf = np.intersect1d(X.columns, human_tfs.index)
 
-# Export
-try:
-    os.makedirs(dirname, exist_ok=True)
-    for label_name in models[0].keys():
-        A_mean = np.stack([m[label_name][0] for m in models]).mean(axis = 0).T
-        #scipy.sparse.save_npz(f'{dirname}/{label_name}_net_with_bootstrap_mean_{LAMBDA_VAL}.npz',
-        #                      scipy.sparse.csr_matrix(A_mean))
-        df_A = pd.DataFrame(A_mean, index = X.columns, columns = common_tf)
-        df_A.to_csv(f'{dirname}/{label_name}_net_with_bootstrap_mean_{LAMBDA_VAL}.csv')
-except OSError:
-    print("Error occured")
+train_bootstrap_mean_models(X, y, common_tf, niter, LAMBDA_VAL, dirname)
+
+#%% Create bootstrap-mean models from NKI data
+
+dirname = 'models/NetworkModels/NKI'
+niter = 20 # Number of bootstrap iterations
+LAMBDA_VAL = 0.06
+X = nki_data.copy()
+y = nki_p_type.ravel()
+common_tf = np.intersect1d(nki_data.columns, human_tfs.index)
+
+train_bootstrap_mean_models(X, y, common_tf, niter, LAMBDA_VAL, dirname)
 
 #%% TF-Target coregulatory network analysis and statistics
 
+dirname = 'models/NetworkModels/NKI' # ACES | NKI | METABRIC
 LAMBDA_VAL = 0.06
-ALPHA_CUTOFF = 0.02
+#ALPHA_CUTOFF = 0.02
+ALPHA_CUTOFF = 0.00
 r2_threshold = 0.1
 
-r2 = pd.read_csv(r2_file.format(LAMBDA_VAL), header=None)
-goodGenes = (r2.values >= r2_threshold)
+
+target_dataset = datasets[dirname.split('/')[-1]][0]
+
+# Load R2 values calculated from ACES dataset
+r2 = pd.read_csv(f'{r2_file}_{LAMBDA_VAL}.txt', header=None)
+# convert from df to series
+r2 = r2[0]
+r2.index = aces_data.columns
+# any gene not in ACES will be considered to have R^2 = 1 (gene will be included in downstream analysis)
+target_r2 = pd.Series(1, index = target_dataset.columns)
+common_genes = np.intersect1d(aces_data.columns, target_dataset.columns)
+target_r2.loc[common_genes] = r2.loc[common_genes]
+goodGenes = (target_r2.values >= r2_threshold)
 
 A = {}
 attributes = {}
@@ -129,7 +223,7 @@ nm_file = dirname + '/nmeta_net_with_bootstrap_mean_{0}.csv'.format(LAMBDA_VAL)
 lasso_meta = pd.read_csv(m_file, index_col = 0)
 lasso_nmeta = pd.read_csv(nm_file, index_col = 0)
 
-r2 = pd.read_csv('R2CVScores/cv_r2_score_lambda_{0}.txt'.format(LAMBDA_VAL), header=None)
+r2 = pd.read_csv(f'{r2_file}_{LAMBDA_VAL}.txt', header=None)
 
 goodGenes = (r2.values >= r2_threshold)
 filtered_meta = lasso_meta.loc[goodGenes, :] # filtering genes with better r2

@@ -10,6 +10,11 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 
+from sklearn.metrics import (roc_auc_score,
+                             f1_score,
+                             cohen_kappa_score,
+                             balanced_accuracy_score)
+
 def format_time(seconds):
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
@@ -34,6 +39,33 @@ def get_filtered_expr(expr1, expr2, human_tfs):
     expr1_filtered = expr1.loc[:, common_genes]
     expr2_filtered = expr2.loc[:, common_genes]
     return expr1_filtered, expr2_filtered, common_tfs
+
+def scores_to_metrics(scores, score_threshold_ratio = 0.5, columns = None):
+    if columns is None:
+        columns = [col for col in scores.columns if col not in ['fold', 'patient', 'real_class']]
+    metrics = pd.DataFrame(index = columns, columns = ['AUC', 'F1-score', 'Kappa', 'balanced-accuracy'])
+    y_true = scores['real_class']
+    for col in columns:
+        score = scores[col]
+        score_threshold_col = np.round((score.min() + score.max())*score_threshold_ratio, 2)
+        y_pred = (score > score_threshold_col).astype(int)
+        metrics.loc[col, 'AUC'] = roc_auc_score(y_true, score)
+        metrics.loc[col, 'F1-score'] = f1_score(y_true, y_pred)
+        metrics.loc[col, 'Kappa'] = cohen_kappa_score(y_true, y_pred)
+        metrics.loc[col, 'balanced-accuracy'] = balanced_accuracy_score(y_true, y_pred)
+    return metrics.astype(float)
+
+def scores_to_metrics_per_fold(scores, score_threshold_ratio = 0.5, columns = None):
+    if columns is None:
+        columns = [col for col in scores.columns if col not in ['fold', 'patient', 'real_class']]
+    metrics = {}
+    for fold in scores['fold'].unique():
+        metrics[fold] = scores_to_metrics(scores[scores['fold'] == fold],
+                                          score_threshold_ratio, columns)
+    metrics = pd.concat(metrics)
+    metrics.index.names = ['Fold', 'Model']
+    return metrics.astype(float)
+
 
 def get_network_attributes(adj, tfs, targets):
     attributes = {}
