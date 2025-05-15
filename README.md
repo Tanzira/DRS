@@ -1,24 +1,10 @@
-# DRS
-Repository for breast cancer metastasis analysis.
-Global transcriptional rewiring accurately predicts breast cancer metastasis]{Global transcriptional rewiring accurately predicts breast cancer metastasis
-# Dataset
-## All the intermediary files and datasets can be found here.
-10.5281/zenodo.10070758
-or here
-https://drive.google.com/drive/folders/1QmVE96fgWuBzlYo06aggyiJY0JFUARvl
-## NetworkAnalysis.py
-- Generate network for a specific lambda using bootstrap
-- Read the coefficient files and generates networks
-- Generate .gml file for cytoscape to visualize the networks
-- Perform statistical analysis
-
-## Training.py
-- Generate models for classification using both stratified 10-fold cross-validation and leave-one-study-out cross-validation
-- Generate models for NKI dataset classification using 10-fold cross validation
-- Generate models with ACES dataset and use NKI as validation dataset.
-- Save the models for DRS
-- Calculate probability scores for different algorithms and save them
-
-## Figures.py
-- Generate figures provided in the paper using saved probability scores for each dataset and configuration
-
+Source code for the paper _An Integrated Approach to Knowledge and Prediction Modeling of Breast Cancer Metastasis Using Gene Regulatory Networks_
+## Datasets and Results
+All the intermediary files and datasets can be found at https://drive.google.com/drive/folders/1QmVE96fgWuBzlYo06aggyiJY0JFUARvl
+## Files
+- `drs.py`: core module for learning LASSO regression models of gene expression, saving and loading coefficients, and using the dysregulation score to classify new samples.
+- `training.py`: load data and train DRS models.
+- `training_external_grns.py`: infer GRNs using [GReNaDIne](https://grenadine.readthedocs.io/en/latest/) for feature preselection prior to training DRS models.
+- `network_analysis.py`: downstream analysis of the GRNs obtained from training.
+- `figures.py`: generate manuscript plots.
+- `utils.py`: utility functions
